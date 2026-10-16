@@ -16,7 +16,7 @@ class BackupFiles {
     final choice = await openFile(
       acceptedTypeGroups: [
         const XTypeGroup(
-          label: 'Fieldnotes ZIP backup',
+          label: 'TouchGrass ZIP backup',
           extensions: ['zip'],
           mimeTypes: ['application/zip', 'application/x-zip-compressed'],
           uniformTypeIdentifiers: ['public.zip-archive'],
@@ -255,7 +255,7 @@ class _BackupPageState extends State<BackupPage> {
                       ),
                       const SizedBox(height: 8),
                       const Text(
-                        'Select a Fieldnotes ZIP. Records, references, and checksums are checked before anything changes.',
+                        'Select a TouchGrass ZIP. Records, references, and checksums are checked before anything changes.',
                       ),
                       const SizedBox(height: 12),
                       OutlinedButton.icon(
@@ -321,7 +321,7 @@ class _BackupPageState extends State<BackupPage> {
                       ),
                       const SizedBox(height: 8),
                       const Text(
-                        'GeoJSON includes place points, collection membership, route stops, and saved road lines. Uncalculated routes have no line geometry. Photos are included only in ZIP backups. Use ZIP to restore Fieldnotes.',
+                        'GeoJSON includes place points, collection membership, route stops, and saved road lines. Uncalculated routes have no line geometry. Photos are included only in ZIP backups. Use ZIP to restore TouchGrass.',
                       ),
                       const SizedBox(height: 12),
                       Builder(
@@ -369,7 +369,7 @@ class _BackupPageState extends State<BackupPage> {
               ],
               const SizedBox(height: 12),
               const Text(
-                'Limits: 128 MB ZIP, 256 MB expanded, 32 MB per file. Imported archives must use a supported Fieldnotes format.',
+                'Limits: 128 MB ZIP, 256 MB expanded, 32 MB per file. Imported archives must use a supported TouchGrass format.',
               ),
             ],
           ),

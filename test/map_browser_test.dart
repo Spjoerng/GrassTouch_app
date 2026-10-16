@@ -169,8 +169,9 @@ void main() {
       expect(find.text('Selected: 14.599500, 120.984200'), findsOneWidget);
       await tester.tap(find.text('Save this place'));
       await drainMap(tester);
-      expect(find.text('14.5995'), findsOneWidget);
-      expect(find.text('120.9842'), findsOneWidget);
+      expect(find.text('Location selected'), findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'Latitude'), findsNothing);
+      expect(find.widgetWithText(TextFormField, 'Longitude'), findsNothing);
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Place name'),
         'Map memory',

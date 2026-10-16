@@ -8,6 +8,7 @@ import 'map/map_data.dart';
 import 'map/native_place_map.dart';
 import 'place_journal.dart';
 import 'place_filter_sheet.dart';
+import 'ui/journal_motion.dart';
 
 class PlaceBrowser extends StatelessWidget {
   const PlaceBrowser({
@@ -52,7 +53,13 @@ class PlaceBrowser extends StatelessWidget {
     await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => PlaceDetails(store: store, place: place),
+      builder: (_) => PlaceDetails(
+        store: store,
+        place: place,
+        canvasBuilder: canvasBuilder,
+        locationService: locationService,
+        offlineRegion: offlineRegion,
+      ),
     );
     onChanged();
   }
@@ -96,6 +103,9 @@ class PlaceBrowser extends StatelessWidget {
         store: store,
         initialLatitude: point.latitude,
         initialLongitude: point.longitude,
+        canvasBuilder: canvasBuilder,
+        locationService: locationService,
+        offlineRegion: offlineRegion,
         collectionId: collectionId,
       ),
     );
@@ -152,11 +162,8 @@ class PlaceBrowser extends StatelessWidget {
         elevation: showMap ? 4 : 1,
         shadowColor: Colors.black26,
         borderRadius: BorderRadius.circular(18),
-        child: TextFormField(
-          key: const ValueKey('place-search'),
-          initialValue: filter.query,
-          textInputAction: TextInputAction.search,
-          onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
+        child: _PlaceSearchField(
+          value: filter.query,
           onChanged: (v) => update(query: v),
           decoration: InputDecoration(
             hintText: collectionId == null
@@ -187,17 +194,26 @@ class PlaceBrowser extends StatelessWidget {
             enabledBorder: InputBorder.none,
             focusedBorder: InputBorder.none,
             contentPadding: const EdgeInsets.symmetric(vertical: 16),
-            suffixIcon: Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: IconButton(
-                tooltip: 'Filters',
-                onPressed: () => openFilters(context),
-                icon: Badge(
-                  isLabelVisible: activeFilters > 0,
-                  label: Text('$activeFilters'),
-                  child: const Icon(Icons.tune),
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (filter.query.isNotEmpty)
+                  IconButton(
+                    tooltip: 'Clear search',
+                    onPressed: () => update(query: ''),
+                    icon: const Icon(Icons.close, size: 20),
+                  ),
+                IconButton(
+                  tooltip: 'Filters',
+                  onPressed: () => openFilters(context),
+                  icon: Badge(
+                    isLabelVisible: activeFilters > 0,
+                    label: Text('$activeFilters'),
+                    child: const Icon(Icons.tune),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 4),
+              ],
             ),
           ),
         ),
@@ -255,7 +271,7 @@ class PlaceBrowser extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.place_outlined, size: 42),
+                  const JournalEmptyIcon(Icons.place_outlined),
                   const SizedBox(height: 16),
                   Text(
                     places.isEmpty
@@ -263,7 +279,11 @@ class PlaceBrowser extends StatelessWidget {
                               ? 'Make room for a memory'
                               : 'No places in this collection')
                         : 'No places found',
-                    style: const TextStyle(fontSize: 22),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -279,6 +299,12 @@ class PlaceBrowser extends StatelessWidget {
                       onPressed: onAddPlaces,
                       icon: const Icon(Icons.playlist_add),
                       label: const Text('Manage places'),
+                    ),
+                  if (filter.query.isNotEmpty || activeFilters > 0)
+                    TextButton.icon(
+                      onPressed: () => onFilterChanged(const PlaceFilter()),
+                      icon: const Icon(Icons.filter_alt_off_outlined),
+                      label: const Text('Clear search & filters'),
                     ),
                 ],
               ),
@@ -297,17 +323,44 @@ class PlaceBrowser extends StatelessWidget {
                     vertical: 12,
                   ),
                   leading: CircleAvatar(
-                    backgroundColor: marker.color,
-                    child: Icon(marker.icon, color: Colors.white),
+                    backgroundColor: marker.color.withValues(alpha: .12),
+                    child: Icon(marker.icon, color: marker.color),
                   ),
                   title: Text(
                     place['name'] as String,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
-                  subtitle: Text(
-                    '${place['category']} - ${place['visited'] == 1 ? 'Visited' : 'Want to visit'}\n${place['latitude']}, ${place['longitude']}${place['rating'] == null ? '' : ' | ${place['rating']} / 5'}',
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${place['category']} · ${place['visited'] == 1 ? 'Visited' : 'Want to visit'}',
+                        ),
+                        if (place['rating'] != null)
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.star_rounded,
+                                size: 16,
+                                color: Color(0xFFB77C18),
+                              ),
+                              const SizedBox(width: 4),
+                              Text('${place['rating']} / 5'),
+                            ],
+                          ),
+                        if ((place['notes'] as String? ?? '').trim().isNotEmpty)
+                          Text(
+                            place['notes'] as String,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                      ],
+                    ),
                   ),
-                  isThreeLine: true,
                   trailing: onRemovePlace != null
                       ? IconButton(
                           tooltip: 'Remove from collection',
@@ -356,14 +409,61 @@ class PlaceBrowser extends StatelessWidget {
         ],
       );
     }
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: searchTools(context),
-        ),
-        Expanded(child: placeList(context)),
-      ],
+    return JournalReveal(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: searchTools(context),
+          ),
+          Expanded(child: placeList(context)),
+        ],
+      ),
     );
   }
+}
+
+class _PlaceSearchField extends StatefulWidget {
+  const _PlaceSearchField({
+    required this.value,
+    required this.onChanged,
+    required this.decoration,
+  });
+  final String value;
+  final ValueChanged<String> onChanged;
+  final InputDecoration decoration;
+
+  @override
+  State<_PlaceSearchField> createState() => _PlaceSearchFieldState();
+}
+
+class _PlaceSearchFieldState extends State<_PlaceSearchField> {
+  late final controller = TextEditingController(text: widget.value);
+
+  @override
+  void didUpdateWidget(covariant _PlaceSearchField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (controller.text != widget.value) {
+      controller.value = TextEditingValue(
+        text: widget.value,
+        selection: TextSelection.collapsed(offset: widget.value.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => TextFormField(
+    key: const ValueKey('place-search'),
+    controller: controller,
+    textInputAction: TextInputAction.search,
+    onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
+    onChanged: widget.onChanged,
+    decoration: widget.decoration,
+  );
 }

@@ -19,6 +19,14 @@ class JournalMapView extends StatefulWidget {
     this.locationService,
     this.offlineRegion,
     this.onOpenOfflineMaps,
+    this.initialSelection,
+    this.selectionActionLabel = 'Save this place',
+    this.fallbackActionLabel = 'Use offline list',
+    this.routeGeometry,
+    this.routeStops = const [],
+    this.allowPlaceSelection = true,
+    this.startWithLiveLocation = false,
+    this.initialCamera,
   });
   final List<Map<String, Object?>> places;
   final ValueChanged<List<int>> onPlacesSelected;
@@ -28,6 +36,13 @@ class JournalMapView extends StatefulWidget {
   final JournalLocation? locationService;
   final OfflineRegionDefinition? offlineRegion;
   final VoidCallback? onOpenOfflineMaps;
+  final MapCoordinate? initialSelection;
+  final String selectionActionLabel;
+  final String fallbackActionLabel;
+  final Map<String, dynamic>? routeGeometry;
+  final List<MapCoordinate> routeStops;
+  final bool allowPlaceSelection, startWithLiveLocation;
+  final MapCameraRequest? initialCamera;
   @override
   State<JournalMapView> createState() => _JournalMapViewState();
 }
@@ -38,6 +53,7 @@ class _JournalMapViewState extends State<JournalMapView>
   MapCoordinate? selected, location;
   MapCameraRequest? camera;
   bool locating = false, ready = false, saving = false;
+  bool liveLocation = false, followLocation = false;
   String? mapError, settingsError;
   LocationFailure? locationFailure;
   int generation = 0;
@@ -48,7 +64,15 @@ class _JournalMapViewState extends State<JournalMapView>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    selected = widget.initialSelection;
+    camera = widget.initialCamera;
+    if (selected != null) camera = MapCameraRequest.focus(selected!);
     startTimeout();
+    if (widget.startWithLiveLocation) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) locate();
+      });
+    }
   }
 
   void startTimeout() {
@@ -80,11 +104,12 @@ class _JournalMapViewState extends State<JournalMapView>
         state == AppLifecycleState.hidden) {
       timeout?.cancel();
       locationRequest++;
-      // A location fix is a momentary observation. Clear it on backgrounding;
-      // returning from settings must never start a permission prompt itself.
+      // Live tracking is foreground-only and must be explicitly restarted.
       setState(() {
         locating = false;
         location = null;
+        liveLocation = false;
+        followLocation = false;
       });
     }
   }
@@ -97,6 +122,10 @@ class _JournalMapViewState extends State<JournalMapView>
   });
   Future<void> locate() async {
     if (locating) return;
+    if (liveLocation) {
+      setState(() => followLocation = true);
+      return;
+    }
     final request = ++locationRequest;
     setState(() {
       locating = true;
@@ -108,8 +137,10 @@ class _JournalMapViewState extends State<JournalMapView>
       if (mounted && request == locationRequest) {
         setState(() {
           location = point;
-          selected = point;
+          if (widget.allowPlaceSelection) selected = point;
           camera = MapCameraRequest.focus(point);
+          liveLocation = true;
+          followLocation = true;
         });
       }
     } on LocationFailure catch (failure) {
@@ -121,6 +152,16 @@ class _JournalMapViewState extends State<JournalMapView>
         setState(() => locating = false);
       }
     }
+  }
+
+  void stopLiveLocation() {
+    locationRequest++;
+    setState(() {
+      locating = false;
+      liveLocation = false;
+      followLocation = false;
+      location = null;
+    });
   }
 
   Future<void> settings() async {
@@ -174,7 +215,7 @@ class _JournalMapViewState extends State<JournalMapView>
             ),
             const SizedBox(height: 16),
             const Text(
-              'The blue dot is your last requested location fix. It may be approximate. Confirm the selected coordinates before saving.',
+              'My location starts live updates while this map is open. The blue marker moves as you travel; its compass indicator shows the direction your phone faces when a heading sensor is available. Compass accuracy can vary, especially inside a vehicle. Pan to explore, then tap My location to follow again. Stop live location from Map options. Tracking stops when the app is backgrounded. A selected pin stays where you chose it; it does not move with you.',
             ),
             const SizedBox(height: 16),
             const Text(
@@ -208,7 +249,11 @@ class _JournalMapViewState extends State<JournalMapView>
                   height: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.my_location),
+              : Icon(
+                  liveLocation && followLocation
+                      ? Icons.gps_fixed
+                      : Icons.my_location,
+                ),
         ),
       ),
       const SizedBox(height: 10),
@@ -221,10 +266,14 @@ class _JournalMapViewState extends State<JournalMapView>
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
-              tooltip: 'Fit places',
-              onPressed: widget.places.isEmpty || !ready
+              tooltip: widget.routeStops.isEmpty ? 'Fit places' : 'Fit route',
+              onPressed:
+                  (widget.places.isEmpty && widget.routeStops.isEmpty) || !ready
                   ? null
-                  : () => setState(() => camera = MapCameraRequest.fit()),
+                  : () => setState(() {
+                      followLocation = false;
+                      camera = MapCameraRequest.fit();
+                    }),
               icon: const Icon(Icons.fit_screen),
             ),
             const SizedBox(width: 28, child: Divider(height: 1)),
@@ -235,8 +284,15 @@ class _JournalMapViewState extends State<JournalMapView>
                   ? legend()
                   : value == 'offline'
                   ? widget.onOpenOfflineMaps?.call()
+                  : value == 'stop-location'
+                  ? stopLiveLocation()
                   : retry(),
               itemBuilder: (_) => [
+                if (liveLocation)
+                  const PopupMenuItem(
+                    value: 'stop-location',
+                    child: Text('Stop live location'),
+                  ),
                 const PopupMenuItem(
                   value: 'info',
                   child: Text('Map info / missing tiles'),
@@ -278,7 +334,7 @@ class _JournalMapViewState extends State<JournalMapView>
                 TextButton(onPressed: retry, child: const Text('Retry map')),
                 TextButton(
                   onPressed: widget.onShowList,
-                  child: const Text('Use offline list'),
+                  child: Text(widget.fallbackActionLabel),
                 ),
                 if (widget.onOpenOfflineMaps != null)
                   TextButton(
@@ -344,7 +400,7 @@ class _JournalMapViewState extends State<JournalMapView>
           FilledButton.icon(
             onPressed: saving ? null : saveSelection,
             icon: const Icon(Icons.add, size: 18),
-            label: const Text('Save this place'),
+            label: Text(widget.selectionActionLabel),
           ),
         ],
       ),
@@ -385,14 +441,25 @@ class _JournalMapViewState extends State<JournalMapView>
     final currentGeneration = generation;
     final options = MapCanvasOptions(
       offlineRegion: widget.offlineRegion,
+      routeGeometry: widget.routeGeometry,
+      routeStops: widget.routeStops,
       places: widget.places,
       selected: selected,
       location: location,
+      liveLocation: liveLocation,
+      followLocation: followLocation,
+      onFollowLocationDismissed: () {
+        if (mounted && followLocation) setState(() => followLocation = false);
+      },
       camera: camera,
       onPlacesSelected: widget.onPlacesSelected,
       onCoordinateSelected: (point) {
+        if (!widget.allowPlaceSelection) return;
         FocusScope.of(context).unfocus();
-        setState(() => selected = point);
+        setState(() {
+          selected = point;
+          followLocation = false;
+        });
       },
       onReady: () {
         if (!mounted || currentGeneration != generation) return;
@@ -436,6 +503,53 @@ class _JournalMapViewState extends State<JournalMapView>
                 ),
               ),
             ),
+          if (ready &&
+              liveLocation &&
+              mapError == null &&
+              locationFailure == null)
+            Positioned(
+              top: 132,
+              left: 16,
+              right: 80,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  color: Colors.white,
+                  elevation: 2,
+                  borderRadius: BorderRadius.circular(24),
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 12, right: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.circle,
+                          size: 8,
+                          color: Color(0xFF247DE3),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            followLocation
+                                ? 'Live · Following you'
+                                : 'Live · Exploring',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Stop live location',
+                          onPressed: stopLiveLocation,
+                          icon: const Icon(Icons.close, size: 18),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           if (mapError != null || locationFailure != null)
             Positioned(
               top: 132,
@@ -469,6 +583,7 @@ class _JournalMapViewState extends State<JournalMapView>
               ),
             ),
           if (ready &&
+              widget.allowPlaceSelection &&
               widget.places.isEmpty &&
               selected == null &&
               mapError == null &&

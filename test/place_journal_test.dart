@@ -32,8 +32,13 @@ Future<void> editor(
             onPressed: () => showDialog<bool>(
               context: context,
               barrierDismissible: false,
-              builder: (_) =>
-                  PlaceDialog(store: store, place: place, pickPhotos: pick),
+              builder: (_) => PlaceDialog(
+                store: store,
+                place: place,
+                initialLatitude: 16.4,
+                initialLongitude: 120.6,
+                pickPhotos: pick,
+              ),
             ),
             child: const Text('Open editor'),
           ),
@@ -80,14 +85,6 @@ void main() {
         'Mountain cafe',
       );
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Latitude'),
-        '16.4',
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Longitude'),
-        '120.6',
-      );
-      await tester.enterText(
         find.widgetWithText(TextFormField, 'Notes'),
         'Coffee above the clouds',
       );
@@ -101,10 +98,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.byType(DropdownButtonFormField<int>));
-      await tester.tap(find.byType(DropdownButtonFormField<int>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('5 / 5').last);
+      await tester.ensureVisible(find.byKey(const ValueKey('place-rating-5')));
+      await tester.tap(find.byKey(const ValueKey('place-rating-5')));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byType(SwitchListTile));
       await tester.tap(find.byType(SwitchListTile));
@@ -238,7 +233,13 @@ void main() {
       expect(find.text('Pine trail'), findsOneWidget);
       await tester.tap(find.text('Pine trail'));
       await drain(tester);
-      expect(find.text('Cool mountain air'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Cool mountain air'),
+        ),
+        findsOneWidget,
+      );
       expect(find.text('Rating: 4 / 5'), findsOneWidget);
       expect(find.text('Visit date: 2026-10-10'), findsOneWidget);
       await tester.tap(find.text('Edit place'));
@@ -259,6 +260,16 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete place'));
       await drain(tester);
+      for (
+        var i = 0;
+        i < 60 && find.text('No places found').evaluate().isEmpty;
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 30)),
+        );
+        await tester.pumpAndSettle();
+      }
       expect(find.text('No places found'), findsOneWidget);
       final places = await tester.runAsync(store.places);
       expect(places!.map((p) => p['name']), ['Museum', 'Beach']);
@@ -315,10 +326,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Want to visit').last);
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.byType(DropdownButtonFormField<int>));
-      await tester.tap(find.byType(DropdownButtonFormField<int>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Not rated').last);
+      await tester.ensureVisible(find.text('Clear rating'));
+      await tester.tap(find.text('Clear rating'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byTooltip('Remove photo'));
       await tester.tap(find.byTooltip('Remove photo'));

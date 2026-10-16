@@ -18,6 +18,8 @@ class RecordingMapPlatform extends MapLibrePlatform {
   final updateCounts = <String, int>{};
   final optionUpdates = <Map<String, dynamic>>[];
   final cameras = <dynamic>[];
+  final trackingModes = <MyLocationTrackingMode>[];
+  final cameraActions = <String>[];
   List<dynamic> hits = [];
   int? expandedCluster;
   @override
@@ -131,7 +133,14 @@ class RecordingMapPlatform extends MapLibrePlatform {
     Duration? duration,
   }) async {
     cameras.add(cameraUpdate.toJson());
+    cameraActions.add('camera');
     return true;
+  }
+
+  @override
+  Future<void> updateMyLocationTrackingMode(MyLocationTrackingMode mode) async {
+    trackingModes.add(mode);
+    cameraActions.add('tracking:$mode');
   }
 
   @override

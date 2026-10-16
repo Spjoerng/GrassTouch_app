@@ -20,6 +20,9 @@ class MapCanvasOptions {
     required this.onError,
     this.selected,
     this.location,
+    this.liveLocation = false,
+    this.followLocation = false,
+    this.onFollowLocationDismissed,
     this.camera,
     this.routeGeometry,
     this.routeStops = const [],
@@ -33,6 +36,8 @@ class MapCanvasOptions {
   final VoidCallback onReady;
   final ValueChanged<String> onError;
   final MapCoordinate? selected, location;
+  final bool liveLocation, followLocation;
+  final VoidCallback? onFollowLocationDismissed;
   final MapCameraRequest? camera;
   final Map<String, dynamic>? routeGeometry;
   final List<MapCoordinate> routeStops;
@@ -62,6 +67,7 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
   List<(double, double)> appliedStops = const [];
   int? appliedStopSelection;
   bool optionsQueued = false;
+  bool appliedFollowing = false;
   void enqueue(Future<void> Function() action) {
     work = work
         .then((_) async {
@@ -277,12 +283,15 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
       appliedSelection = options.selected;
     }
     if (!mounted) return;
-    if (!sameCoordinate(options.location, appliedLocation)) {
+    // The native location component owns the live dot and compass indicator.
+    // Keep the GeoJSON dot only for a static observation.
+    final staticLocation = options.liveLocation ? null : options.location;
+    if (!sameCoordinate(staticLocation, appliedLocation)) {
       await map.setGeoJsonSource(
         'journal-location',
-        coordinateGeoJson(options.location),
+        coordinateGeoJson(staticLocation),
       );
-      appliedLocation = options.location;
+      appliedLocation = staticLocation;
     }
     if (!mounted) return;
     // Route models supply immutable geometry; do not serialize and upload a
@@ -312,6 +321,12 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
     }
     if (!mounted) return;
     if (options.camera != null && !identical(options.camera, appliedCamera)) {
+      // Programmatic camera moves end native tracking on Android. Apply the
+      // requested camera first, then enable following after it completes.
+      if (appliedFollowing) {
+        appliedFollowing = false;
+        await map.updateMyLocationTrackingMode(MyLocationTrackingMode.none);
+      }
       if (options.camera!.target == null) {
         await fitPlaces();
       } else {
@@ -324,6 +339,16 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
         );
       }
       appliedCamera = options.camera;
+    }
+    if (!mounted) return;
+    // Camera/source work can outlive a stop or pan gesture. Honor the latest
+    // intent rather than restoring tracking from the queued options snapshot.
+    final follow = widget.options.liveLocation && widget.options.followLocation;
+    if (follow != appliedFollowing) {
+      appliedFollowing = follow;
+      await map.updateMyLocationTrackingMode(
+        follow ? MyLocationTrackingMode.tracking : MyLocationTrackingMode.none,
+      );
     }
   }
 
@@ -466,6 +491,7 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
       appliedPlaces = null;
       appliedSelection = null;
       appliedLocation = null;
+      appliedFollowing = false;
       appliedRoad = null;
       appliedStops = const [];
       appliedStopSelection = null;
@@ -483,9 +509,20 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
     compassViewPosition: CompassViewPosition.topLeft,
     compassViewMargins: const math.Point(16, 132),
     trackCameraPosition: false,
-    // Location is a single user-requested fix, drawn from our local GeoJSON
-    // source. The map SDK never starts a second location engine or prompt.
-    myLocationEnabled: false,
+    // Permission is checked by JournalLocation before this is enabled. The
+    // native engine owns continuous foreground updates and sensor heading.
+    myLocationEnabled: widget.options.liveLocation,
+    locationEnginePlatforms: defaultTargetPlatform == TargetPlatform.iOS
+        ? const LocationEnginePlatforms.iOS(enableHighAccuracy: true)
+        : const LocationEnginePlatforms.android(enableHighAccuracy: true),
+    myLocationRenderMode: widget.options.liveLocation
+        ? MyLocationRenderMode.compass
+        : MyLocationRenderMode.normal,
+    onCameraTrackingDismissed: () {
+      if (!mounted || !appliedFollowing) return;
+      appliedFollowing = false;
+      widget.options.onFollowLocationDismissed?.call();
+    },
   );
 }
 

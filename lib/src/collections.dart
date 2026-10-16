@@ -5,6 +5,7 @@ import 'data/place_filter.dart';
 import 'map/journal_location.dart';
 import 'map/native_place_map.dart';
 import 'place_browser.dart';
+import 'ui/journal_motion.dart';
 
 class CollectionsPage extends StatelessWidget {
   const CollectionsPage({
@@ -44,7 +45,7 @@ class CollectionsPage extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 12),
           child: Column(
             children: [
-              const Icon(Icons.folder_open_outlined, size: 44),
+              const JournalEmptyIcon(Icons.folder_open_outlined),
               const SizedBox(height: 16),
               const Text(
                 'Give your places a home',
@@ -282,6 +283,7 @@ class _CollectionDetailsState extends State<CollectionDetails> {
   Widget build(BuildContext context) => PopScope(
     canPop: !busy,
     child: Scaffold(
+      resizeToAvoidBottomInset: !showMap,
       appBar: AppBar(
         title: Text(
           collection['name'] as String,

@@ -11,6 +11,7 @@ import 'routes/route_planner.dart';
 import 'routes/road_router.dart';
 import 'backup/backup_page.dart';
 import 'map/offline_maps_page.dart';
+import 'ui/journal_motion.dart';
 
 const forest = Color(0xFF254F40);
 const cream = Color(0xFFF6F5EF);
@@ -20,6 +21,12 @@ const destinationIcons = [
   Icons.place_outlined,
   Icons.folder_outlined,
   Icons.route_outlined,
+];
+const selectedDestinationIcons = [
+  Icons.explore,
+  Icons.place,
+  Icons.folder,
+  Icons.route,
 ];
 
 class JournalApp extends StatelessWidget {
@@ -36,7 +43,7 @@ class JournalApp extends StatelessWidget {
   final RoadRouter? roadRouter;
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'Fieldnotes - Place journal',
+    title: 'TouchGrass',
     debugShowCheckedModeBanner: false,
     theme: ThemeData(
       useMaterial3: true,
@@ -53,12 +60,62 @@ class JournalApp extends StatelessWidget {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: Colors.white,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 18,
+        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: Color(0xFFCAD4CD)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: forest, width: 2),
+        ),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: cream,
+        surfaceTintColor: Colors.transparent,
+        indicatorColor: const Color(0xFFD5E8DD),
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) => TextStyle(
+            fontSize: 12,
+            fontWeight: states.contains(WidgetState.selected)
+                ? FontWeight.w700
+                : FontWeight.w500,
+            color: forest,
+          ),
+        ),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: cream,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        titleTextStyle: const TextStyle(
+          color: forest,
+          fontSize: 22,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          textStyle: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+      ),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        elevation: 2,
+        highlightElevation: 4,
       ),
       cardTheme: CardThemeData(
         color: Colors.white,
         elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xFFE5EAE4)),
+        ),
       ),
     ),
     home: JournalShell(
@@ -126,6 +183,7 @@ class _JournalShellState extends State<JournalShell>
             store: widget.store,
             canvasBuilder: widget.mapCanvasBuilder,
             router: widget.roadRouter,
+            locationService: widget.locationService,
           ),
         ),
       );
@@ -141,7 +199,11 @@ class _JournalShellState extends State<JournalShell>
         : await showDialog<bool>(
             context: context,
             barrierDismissible: false,
-            builder: (_) => PlaceDialog(store: widget.store),
+            builder: (_) => PlaceDialog(
+              store: widget.store,
+              canvasBuilder: widget.mapCanvasBuilder,
+              locationService: widget.locationService,
+            ),
           );
     if (saved == true && mounted) setState(refresh);
   }
@@ -172,7 +234,11 @@ class _JournalShellState extends State<JournalShell>
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 850;
     return Scaffold(
+      // The keyboard overlays Explore instead of resizing the native viewport.
+      // Lists still resize so search results remain reachable above the IME.
+      resizeToAvoidBottomInset: selected != 0,
       body: SafeArea(
+        maintainBottomViewPadding: wide && selected == 0,
         child: Row(
           children: [
             if (wide)
@@ -193,7 +259,7 @@ class _JournalShellState extends State<JournalShell>
                             child: FittedBox(
                               fit: BoxFit.scaleDown,
                               child: Text(
-                                'fieldnotes',
+                                'TouchGrass',
                                 style: TextStyle(
                                   fontSize: 24,
                                   fontWeight: FontWeight.w800,
@@ -217,6 +283,7 @@ class _JournalShellState extends State<JournalShell>
                           4,
                           (i) => NavigationRailDestination(
                             icon: Icon(destinationIcons[i]),
+                            selectedIcon: Icon(selectedDestinationIcons[i]),
                             label: Text(destinations[i]),
                           ),
                         ),
@@ -320,25 +387,32 @@ class _JournalShellState extends State<JournalShell>
                           );
                         }
                         if (selected == 2) {
-                          return CollectionsPage(
-                            store: widget.store,
-                            collections: collections,
-                            onChanged: () {
-                              if (mounted) setState(refresh);
-                            },
-                            canvasBuilder: widget.mapCanvasBuilder,
-                            locationService: widget.locationService,
+                          return JournalReveal(
+                            key: const ValueKey('collections-entry'),
+                            child: CollectionsPage(
+                              store: widget.store,
+                              collections: collections,
+                              onChanged: () {
+                                if (mounted) setState(refresh);
+                              },
+                              canvasBuilder: widget.mapCanvasBuilder,
+                              locationService: widget.locationService,
+                            ),
                           );
                         }
                         if (selected == 3) {
-                          return RoutesPage(
-                            store: widget.store,
-                            routes: routes,
-                            onChanged: () {
-                              if (mounted) setState(refresh);
-                            },
-                            canvasBuilder: widget.mapCanvasBuilder,
-                            router: widget.roadRouter,
+                          return JournalReveal(
+                            key: const ValueKey('routes-entry'),
+                            child: RoutesPage(
+                              store: widget.store,
+                              routes: routes,
+                              onChanged: () {
+                                if (mounted) setState(refresh);
+                              },
+                              canvasBuilder: widget.mapCanvasBuilder,
+                              router: widget.roadRouter,
+                              locationService: widget.locationService,
+                            ),
                           );
                         }
                         return const SizedBox.shrink();
@@ -370,6 +444,8 @@ class _JournalShellState extends State<JournalShell>
           ? null
           : NavigationBar(
               height: 68,
+              animationDuration: journalMotionDuration(context),
+              maintainBottomViewPadding: selected == 0,
               selectedIndex: selected,
               onDestinationSelected: (value) =>
                   setState(() => selected = value),
@@ -377,6 +453,7 @@ class _JournalShellState extends State<JournalShell>
                 4,
                 (i) => NavigationDestination(
                   icon: Icon(destinationIcons[i]),
+                  selectedIcon: Icon(selectedDestinationIcons[i]),
                   label: destinations[i],
                 ),
               ),
@@ -402,7 +479,7 @@ class EmptyPanel extends StatelessWidget {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 42, color: forest),
+        JournalEmptyIcon(icon),
         const SizedBox(height: 16),
         Text(
           title,

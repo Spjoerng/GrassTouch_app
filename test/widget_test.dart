@@ -102,6 +102,9 @@ void main() {
       find.widgetWithText(TextFormField, 'Place name'),
       'Baguio',
     );
+    await tester.ensureVisible(find.text('Enter coordinates'));
+    await tester.tap(find.text('Enter coordinates'));
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextFormField, 'Latitude'),
       '16.4',
@@ -115,12 +118,19 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 150));
     });
     await tester.pumpAndSettle();
-    for (var i = 0; i < 10 && find.text('Baguio').evaluate().isEmpty; i++) {
+    for (
+      var i = 0;
+      i < 50 &&
+          (find.byType(AlertDialog).evaluate().isNotEmpty ||
+              find.text('Baguio').evaluate().isEmpty);
+      i++
+    ) {
       await tester.runAsync(() async {
         await Future<void>.delayed(const Duration(milliseconds: 50));
       });
       await tester.pumpAndSettle();
     }
+    expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('Baguio'), findsOneWidget);
     await tester.tap(find.text('Collections'));
     await tester.pumpAndSettle();

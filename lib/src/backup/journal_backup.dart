@@ -433,7 +433,7 @@ ValidatedBackup _decode(Uint8List bytes) {
     rethrow;
   } catch (_) {
     throw const BackupException(
-      'This is not a valid Fieldnotes backup, or the archive is damaged.',
+      'This is not a valid TouchGrass backup, or the archive is damaged.',
     );
   }
 }

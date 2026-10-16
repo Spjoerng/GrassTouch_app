@@ -24,7 +24,8 @@ Android, iOS, macOS, Windows, and Linux use SQLite locally. Windows and Linux us
 
 - Create, view, edit, and delete places; deletion requires confirmation.
 - Store names, validated coordinates, categories, notes, optional 1-5 ratings, optional visit dates, visit status, and independent favorite state.
-- A place is either Visited or Want to visit. Visit dates are optional for visited places and are cleared when changing back to Want to visit. Ratings can be cleared using Not rated.
+- A place is either Visited or Want to visit. Visit dates are optional for visited places and are cleared when changing back to Want to visit. Tap one of five visual stars to rate a place; Clear rating returns it to unrated.
+- The mobile place editor keeps numeric coordinate fields out of the form. A map-picked pin is retained automatically; Choose on map / Change location opens a visual picker, and Use current location requests a fix only when tapped. Cancelling the picker keeps the form draft and prior pin. The selected coordinates retain their full precision in storage. Desktop retains collapsed advanced coordinate entry when no native map is available. Place names have a persistent label and extra space below the dialog title.
 - Search names, notes, and categories. Combine category and visit-status filters with Favorites only; Clear filters resets these selections.
 - Choose one or more local JPEG, PNG, or WebP files using the native file selector. Thumbnails open a zoomable photo viewer. Missing or unreadable photos display a fallback and can still be removed.
 - Photos are copied to app-owned attachment storage on Save. Cancelling edits leaves records and photos unchanged. Removing photos and deleting places removes owned copies; original source files are preserved.
@@ -35,10 +36,11 @@ Android, iOS, macOS, Windows, and Linux use SQLite locally. Windows and Linux us
 
 - Explore uses a full-height map above compact navigation, with floating search, a List shortcut, and location/fit/options controls. Category, visit-status, and favorites filters open from the search bar in an Apply/Cancel bottom sheet. Map information and offline notes live in Map info, while native source attribution remains on the map.
 - Explore opens the Map view; My Places opens the List view. Both use the same SQLite records and the same search, category, visit-status, and favorites filters. Switching views keeps the filters.
+- Keyboards overlay map views without resizing or recreating the map viewport. Explore preserves navigation/system padding during keyboard animation; collection and offline-area maps follow the same behavior. Renaming routes also preserves the route map viewport and bottom system padding. List views and place forms still resize above the keyboard.
 - Category-based custom PNG pins are drawn locally with Material icons: Nature, Food & drink, Culture, Stay, and Other. Unknown categories use Other. The map info button includes a legend.
 - Nearby pins cluster natively at low zoom, with count labels. Tap a cluster to zoom to its expansion level. Clustering ends above zoom 14. Overlapping individual pins offer a place-selection panel.
 - Tap a pin to view, edit, or delete the existing journal entry. Map data refreshes after changes. Tap an empty map position to preview coordinates, then Save this place to open a prefilled place editor. Nothing is saved until the form is submitted.
-- My location requests one foreground location fix on demand, centers the camera, draws a blue dot, and selects those coordinates for optional saving. No startup prompt, continuous tracking, or background location is used. Denial, permanent denial, disabled services, timeout, and sensor failures have recovery messages; appropriate settings links are provided.
+- My location checks services and foreground permission on demand, obtains a bounded high-accuracy fix, centers the camera, and selects those coordinates for optional saving. MapLibre then provides continuous foreground updates: the blue marker moves as you travel and its compass indicator shows the phone's facing direction when heading data is available. Pan to explore; tap My location to follow again. Stop using the live-status close button or Map options → Stop live location. Backgrounding stops tracking; returning never restarts or prompts automatically. Selected journal pins stay fixed independently of live movement. Compass accuracy depends on the device and surroundings, particularly inside vehicles; phone heading can differ from travel direction. Initial denial, permanent denial, disabled services, timeout, and fix failures have recovery messages and settings links. No startup prompt or background-location permission is used.
 - The initial map view centers on the Batangas area, Philippines (13.9, 121.05 at zoom 9). Saved places do not override this starting view. Fit places fits the currently filtered markers. Reload basemap recreates the map without changing journal records or filters. A loading timeout offers retry and an offline list fallback.
 
 ### Platform support and basemap
@@ -92,6 +94,7 @@ Map tests inject a canvas boundary rather than claiming to render a native GPU m
 - Switch between the route map and Stops. Drag stop circles to reorder, or use each stop's menu to move up/down, remove, or position it on the map. Tap a waypoint and then a new map position to move it. Editing a route waypoint does not move the original journal place.
 - Calculate road route explicitly requests a driving route from the public OSRM demo service. Requests preserve stop order and ask for full GeoJSON LineString geometry. A white-cased green polyline shows the returned road path. Distances and travel times come from the provider and do not include live traffic.
 - Save routes with or without a calculated road path. Saved ordered waypoint snapshots, geometry, distance, and duration restore without requesting routing again. Source-place deletion removes the reference but keeps the route's stop snapshot and geometry.
+- Once a road path is available, Follow route opens a dedicated map with the stored geometry, stop markers, live foreground movement, and phone compass direction. Pan or Fit route to inspect the path, then tap My location to follow again. It stays open until you stop location or choose End following; arrival does not end it automatically. Backgrounding stops live tracking, which can be restarted explicitly. Following does not change stops, save edits, or send routing requests. This is a route overview with total estimates, without turn-by-turn instructions or automatic rerouting.
 - Rename, edit, and delete saved routes. Deleting a route removes its waypoints, not its journal places. Leaving a changed route prompts before discarding unsaved edits.
 - Moving, adding, removing, or reordering stops immediately clears stale road geometry and estimates. Late routing responses are ignored if the stops changed while the request was running. Renaming a route keeps its calculated path.
 - If routing fails, an unchanged cached path remains available. Modified plans can still save offline with no stale metrics. Network failures, no-road results, malformed responses, and timeouts have recovery messages. No straight-line connection is presented as a road route.
@@ -170,6 +173,8 @@ The database and attachments live in the platform's application support director
 - `lib/src/backup/`: versioned ZIP format, archive validation, transactional restoration, GeoJSON export, and native import/export UI.
 
 ## Validation
+
+The interface uses shared forest-green navigation, outlined cards, and consistent form spacing. Lists enter with a short fade and slide; rating stars respond with a subtle scale animation. These animations respect reduced-motion and accessible-navigation settings. Map canvases stay outside entrance animations, and clearing search preserves the map viewport.
 
 ```sh
 flutter analyze

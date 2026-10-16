@@ -364,6 +364,7 @@ class _OfflineAreaPageState extends State<OfflineAreaPage> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text(widget.area.name)),
+    resizeToAvoidBottomInset: !showMap,
     body: FutureBuilder<List<Map<String, Object?>>>(
       future: places,
       builder: (context, snapshot) {

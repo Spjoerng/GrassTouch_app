@@ -8,6 +8,9 @@ import '../map/native_place_map.dart';
 import 'road_router.dart';
 import 'route_draft.dart';
 import 'route_models.dart';
+import '../ui/journal_motion.dart';
+import '../map/journal_location.dart';
+import 'route_follow_page.dart';
 
 class RoutesPage extends StatelessWidget {
   const RoutesPage({
@@ -17,12 +20,14 @@ class RoutesPage extends StatelessWidget {
     required this.onChanged,
     this.canvasBuilder,
     this.router,
+    this.locationService,
   });
   final JournalStore store;
   final List<Map<String, Object?>> routes;
   final VoidCallback onChanged;
   final MapCanvasBuilder? canvasBuilder;
   final RoadRouter? router;
+  final JournalLocation? locationService;
   @override
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
@@ -32,7 +37,7 @@ class RoutesPage extends StatelessWidget {
           padding: EdgeInsets.symmetric(vertical: 40, horizontal: 12),
           child: Column(
             children: [
-              Icon(Icons.route_outlined, size: 48),
+              JournalEmptyIcon(Icons.route_outlined),
               SizedBox(height: 16),
               Text(
                 'Good trips begin with a plan',
@@ -70,6 +75,7 @@ class RoutesPage extends StatelessWidget {
                     routeId: route['id'] as int,
                     canvasBuilder: canvasBuilder,
                     router: router,
+                    locationService: locationService,
                   ),
                 ),
               );
@@ -89,9 +95,11 @@ class RoutePlanner extends StatefulWidget {
     this.routeId,
     this.canvasBuilder,
     this.router,
+    this.locationService,
   });
   final JournalStore store;
   final int? routeId;
+  final JournalLocation? locationService;
   final MapCanvasBuilder? canvasBuilder;
   final RoadRouter? router;
   @override
@@ -583,6 +591,7 @@ class _RoutePlannerState extends State<RoutePlanner>
       if (!didPop && !saving) leave();
     },
     child: Scaffold(
+      resizeToAvoidBottomInset: !showMap,
       appBar: AppBar(
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
@@ -680,6 +689,7 @@ class _RoutePlannerState extends State<RoutePlanner>
                 Expanded(child: showMap ? map() : stopList()),
                 SafeArea(
                   top: false,
+                  maintainBottomViewPadding: showMap,
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
                     child: Column(
@@ -721,6 +731,29 @@ class _RoutePlannerState extends State<RoutePlanner>
                           ),
                         ),
                         const SizedBox(height: 4),
+                        OutlinedButton.icon(
+                          onPressed:
+                              saving ||
+                                  draft!.calculating ||
+                                  draft!.road == null ||
+                                  (widget.canvasBuilder == null &&
+                                      !nativeMapsSupported)
+                              ? null
+                              : () => Navigator.push<void>(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => RouteFollowPage(
+                                      name: name,
+                                      stops: List.unmodifiable(draft!.stops),
+                                      road: draft!.road!,
+                                      canvasBuilder: widget.canvasBuilder,
+                                      locationService: widget.locationService,
+                                    ),
+                                  ),
+                                ),
+                          icon: const Icon(Icons.navigation_outlined),
+                          label: const Text('Follow route'),
+                        ),
                         const Text(
                           'Calculate sends stop coordinates to OSRM. Driving estimates exclude live traffic. Routing data: OpenStreetMap contributors.',
                           textAlign: TextAlign.center,
