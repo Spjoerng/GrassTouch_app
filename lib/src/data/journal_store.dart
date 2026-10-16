@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'attachment_storage.dart';
+import '../routes/route_models.dart';
 
 class JournalStore {
   JournalStore(this.db, this.storage);
@@ -26,12 +28,13 @@ class JournalStore {
     final db = await (factory ?? databaseFactory).openDatabase(
       location,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 4,
         onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, version) async {
           for (final statement in schema) {
             await db.execute(statement);
           }
+          await installPortableIds(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) await db.execute(cleanupSchema);
@@ -40,6 +43,7 @@ class JournalStore {
               'ALTER TABLE collections ADD COLUMN cover_path TEXT',
             );
           }
+          if (oldVersion < 4) await installPortableIds(db);
         },
       ),
     );
@@ -352,21 +356,65 @@ class JournalStore {
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
-  Future<List<Map<String, Object?>>> routes() =>
-      db.query('routes', orderBy: 'id DESC');
+  Future<List<Map<String, Object?>>> routes() => db.rawQuery(
+    'SELECT r.id, r.name, r.distance_meters, r.duration_seconds, r.created_at, COUNT(w.id) AS stop_count FROM routes r LEFT JOIN waypoints w ON w.route_id = r.id GROUP BY r.id ORDER BY r.id DESC',
+  );
+  Future<Map<String, Object?>> route(int id) async =>
+      (await db.query('routes', where: 'id = ?', whereArgs: [id])).single;
+  Future<List<Map<String, Object?>>> routeStops(int id) => db.query(
+    'waypoints',
+    where: 'route_id = ?',
+    whereArgs: [id],
+    orderBy: 'position',
+  );
+  Future<void> deleteRoute(int id) async {
+    await db.delete('routes', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<int> savePlannedRoute(
+    String name,
+    List<RouteStop> stops, {
+    int? id,
+    RoadRoute? road,
+  }) {
+    if (name.trim().isEmpty ||
+        stops.length < 2 ||
+        stops.length > 25 ||
+        stops.any((s) => !s.valid)) {
+      throw ArgumentError('A named route needs 2 to 25 valid stops');
+    }
+    if (road != null && road.stopsSignature != stopSignature(stops)) {
+      throw ArgumentError('Route geometry is out of date');
+    }
+    return saveRoute(
+      name.trim(),
+      stops.map((s) => {...s.toRow(), 'id': s.placeId}).toList(),
+      id: id,
+      road: road,
+    );
+  }
+
   Future<int> saveRoute(
     String name,
     List<Map<String, Object?>> stops, {
     int? id,
+    RoadRoute? road,
   }) => db.transaction((txn) async {
-    final routeId = id ?? await txn.insert('routes', {'name': name});
+    final values = {
+      'name': name.trim(),
+      'distance_meters': road?.distanceMeters,
+      'duration_seconds': road?.durationSeconds,
+      'geometry_json': road == null ? null : jsonEncode(road.geometry),
+    };
+    final routeId = id ?? await txn.insert('routes', values);
     if (id != null) {
-      await txn.update(
+      final changed = await txn.update(
         'routes',
-        {'name': name},
+        values,
         where: 'id = ?',
         whereArgs: [id],
       );
+      if (changed != 1) throw StateError('Route no longer exists');
     }
     await txn.delete('waypoints', where: 'route_id = ?', whereArgs: [routeId]);
     for (var i = 0; i < stops.length; i++) {
@@ -397,3 +445,30 @@ const schema = [
 ];
 const cleanupSchema =
     'CREATE TABLE attachment_cleanup (relative_path TEXT PRIMARY KEY NOT NULL)';
+
+const portableTables = [
+  'places',
+  'collections',
+  'routes',
+  'waypoints',
+  'attachments',
+];
+
+/// Local integer keys remain fast; random identities survive device transfers.
+Future<void> installPortableIds(DatabaseExecutor db) async {
+  for (final table in portableTables) {
+    await db.execute('ALTER TABLE $table ADD COLUMN stable_id TEXT');
+    await db.execute(
+      'UPDATE $table SET stable_id = lower(hex(randomblob(16)))',
+    );
+    await db.execute(
+      'CREATE UNIQUE INDEX ${table}_stable_idx ON $table(stable_id)',
+    );
+    await db.execute(
+      '''CREATE TRIGGER ${table}_portable_id AFTER INSERT ON $table
+      WHEN NEW.stable_id IS NULL BEGIN
+      UPDATE $table SET stable_id = lower(hex(randomblob(16))) WHERE id = NEW.id;
+      END''',
+    );
+  }
+}

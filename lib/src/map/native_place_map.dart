@@ -1,8 +1,7 @@
-import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'map_data.dart';
 
@@ -22,6 +21,11 @@ class MapCanvasOptions {
     this.selected,
     this.location,
     this.camera,
+    this.routeGeometry,
+    this.routeStops = const [],
+    this.selectedRouteStop,
+    this.onRouteStopSelected,
+    this.offlineRegion,
   });
   final List<Map<String, Object?>> places;
   final ValueChanged<List<int>> onPlacesSelected;
@@ -30,6 +34,11 @@ class MapCanvasOptions {
   final ValueChanged<String> onError;
   final MapCoordinate? selected, location;
   final MapCameraRequest? camera;
+  final Map<String, dynamic>? routeGeometry;
+  final List<MapCoordinate> routeStops;
+  final int? selectedRouteStop;
+  final ValueChanged<int>? onRouteStopSelected;
+  final OfflineRegionDefinition? offlineRegion;
 }
 
 typedef MapCanvasBuilder =
@@ -47,7 +56,12 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
   bool ready = false, initializing = false;
   Future<void> work = Future.value();
   MapCameraRequest? appliedCamera;
-  String? appliedPlaces;
+  List<(Object?, Object?, Object?, String)>? appliedPlaces;
+  MapCoordinate? appliedSelection, appliedLocation;
+  Map<String, dynamic>? appliedRoad;
+  List<(double, double)> appliedStops = const [];
+  int? appliedStopSelection;
+  bool optionsQueued = false;
   void enqueue(Future<void> Function() action) {
     work = work
         .then((_) async {
@@ -67,16 +81,52 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
     initializing = true;
     try {
       final map = controller!;
+      await map.addSource(
+        'planned-road',
+        GeojsonSourceProperties(data: routeLineGeoJson(null)),
+      );
+      await map.addLineLayer(
+        'planned-road',
+        'planned-road-casing',
+        const LineLayerProperties(
+          lineColor: '#ffffff',
+          lineWidth: 9,
+          lineJoin: 'round',
+          lineCap: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await map.addLineLayer(
+        'planned-road',
+        'planned-road-line',
+        const LineLayerProperties(
+          lineColor: '#237854',
+          lineWidth: 5,
+          lineJoin: 'round',
+          lineCap: 'round',
+        ),
+        enableInteraction: false,
+      );
       for (final marker in categoryMarkers.values) {
-        await map.addImage('journal-${marker.key}', await markerImage(marker));
+        final bytes = await cachedMarkerImage(marker);
+        if (!mounted) return;
+        await map.addImage('journal-${marker.key}', bytes);
       }
       await map.addSource(
         placesSourceId,
         GeojsonSourceProperties(
-          data: placesGeoJson(widget.options.places),
+          data: placesGeoJson(const []),
           cluster: true,
           clusterRadius: 48,
-          clusterMaxZoom: 14,
+          clusterMaxZoom: widget.options.offlineRegion == null
+              ? 14
+              : math.max(
+                  0,
+                  math.min(
+                    14,
+                    widget.options.offlineRegion!.maxZoom.floor() - 1,
+                  ),
+                ),
         ),
       );
       await map.addCircleLayer(
@@ -160,6 +210,38 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
         ),
         enableInteraction: false,
       );
+      await map.addSource(
+        'route-stops',
+        GeojsonSourceProperties(data: routeStopsGeoJson(const [])),
+      );
+      await map.addCircleLayer(
+        'route-stops',
+        'route-stop-dots',
+        const CircleLayerProperties(
+          circleColor: [
+            'case',
+            ['get', 'selected'],
+            '#D7782B',
+            '#254F40',
+          ],
+          circleRadius: 14,
+          circleStrokeColor: '#ffffff',
+          circleStrokeWidth: 3,
+        ),
+      );
+      await map.addSymbolLayer(
+        'route-stops',
+        'route-stop-labels',
+        const SymbolLayerProperties(
+          textField: ['get', 'label'],
+          textFont: ['Noto Sans Regular'],
+          textSize: 12,
+          textColor: '#ffffff',
+          textAllowOverlap: true,
+          textIgnorePlacement: true,
+        ),
+        enableInteraction: false,
+      );
       if (!mounted) return;
       ready = true;
       await applyOptions();
@@ -172,20 +254,63 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
   Future<void> applyOptions() async {
     final map = controller!;
     final options = widget.options;
-    final data = placesGeoJson(options.places);
-    final signature = jsonEncode(data);
-    if (signature != appliedPlaces) {
-      await map.setGeoJsonSource(placesSourceId, data);
+    final signature = options.places
+        .map(
+          (p) => (
+            p['id'],
+            p['latitude'],
+            p['longitude'],
+            markerForCategory(p['category'] as String).key,
+          ),
+        )
+        .toList();
+    if (!listEquals(signature, appliedPlaces)) {
+      await map.setGeoJsonSource(placesSourceId, placesGeoJson(options.places));
       appliedPlaces = signature;
     }
-    await map.setGeoJsonSource(
-      'journal-selection',
-      coordinateGeoJson(options.selected),
-    );
-    await map.setGeoJsonSource(
-      'journal-location',
-      coordinateGeoJson(options.location),
-    );
+    if (!mounted) return;
+    if (!sameCoordinate(options.selected, appliedSelection)) {
+      await map.setGeoJsonSource(
+        'journal-selection',
+        coordinateGeoJson(options.selected),
+      );
+      appliedSelection = options.selected;
+    }
+    if (!mounted) return;
+    if (!sameCoordinate(options.location, appliedLocation)) {
+      await map.setGeoJsonSource(
+        'journal-location',
+        coordinateGeoJson(options.location),
+      );
+      appliedLocation = options.location;
+    }
+    if (!mounted) return;
+    // Route models supply immutable geometry; do not serialize and upload a
+    // potentially large road line when only the selection or search changes.
+    if (!identical(options.routeGeometry, appliedRoad)) {
+      await map.setGeoJsonSource(
+        'planned-road',
+        routeLineGeoJson(options.routeGeometry),
+      );
+      appliedRoad = options.routeGeometry;
+    }
+    if (!mounted) return;
+    final stops = options.routeStops
+        .map((s) => (s.latitude, s.longitude))
+        .toList();
+    if (!listEquals(stops, appliedStops) ||
+        options.selectedRouteStop != appliedStopSelection) {
+      await map.setGeoJsonSource(
+        'route-stops',
+        routeStopsGeoJson(
+          options.routeStops,
+          selected: options.selectedRouteStop,
+        ),
+      );
+      appliedStops = stops;
+      appliedStopSelection = options.selectedRouteStop;
+    }
+    if (!mounted) return;
     if (options.camera != null && !identical(options.camera, appliedCamera)) {
       if (options.camera!.target == null) {
         await fitPlaces();
@@ -204,7 +329,6 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
 
   Future<void> fitPlaces() async {
     final places = widget.options.places;
-    if (places.isEmpty) return;
     final coordinates = places
         .map(
           (p) => LatLng(
@@ -213,6 +337,18 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
           ),
         )
         .toList();
+    coordinates.addAll(
+      widget.options.routeStops.map((p) => LatLng(p.latitude, p.longitude)),
+    );
+    final routeCoords = widget.options.routeGeometry?['coordinates'] as List?;
+    if (routeCoords != null) {
+      coordinates.addAll(
+        routeCoords.map(
+          (c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()),
+        ),
+      );
+    }
+    if (coordinates.isEmpty) return;
     final south = coordinates.map((p) => p.latitude).reduce(math.min);
     final north = coordinates.map((p) => p.latitude).reduce(math.max);
     final west = coordinates.map((p) => p.longitude).reduce(math.min);
@@ -239,6 +375,19 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
 
   void tap(math.Point<double> point, LatLng coordinate) => enqueue(() async {
     if (!ready) return;
+    if (widget.options.onRouteStopSelected != null) {
+      final stops = await controller!.queryRenderedFeatures(point, [
+        'route-stop-dots',
+      ], null);
+      if (!mounted) return;
+      if (stops.isNotEmpty) {
+        final index =
+            (((stops.first as Map)['properties'] as Map)['index'] as num)
+                .toInt();
+        widget.options.onRouteStopSelected!(index);
+        return;
+      }
+    }
     final features = await controller!.queryRenderedFeatures(point, [
       placesLayerId,
       clustersLayerId,
@@ -288,18 +437,40 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
   @override
   void didUpdateWidget(covariant NativePlaceMap oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (ready) enqueue(applyOptions);
+    if (ready && !optionsQueued) {
+      optionsQueued = true;
+      enqueue(() async {
+        optionsQueued = false;
+        await applyOptions();
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) => MapLibreMap(
-    styleString: mapStyleUrl,
-    initialCameraPosition: const CameraPosition(
-      target: LatLng(13.9, 121.05),
-      zoom: 9,
-    ),
+    styleString: widget.options.offlineRegion?.mapStyleUrl ?? mapStyleUrl,
+    initialCameraPosition: initialCamera(widget.options.offlineRegion),
+    minMaxZoomPreference: widget.options.offlineRegion == null
+        ? MinMaxZoomPreference.unbounded
+        : MinMaxZoomPreference(
+            widget.options.offlineRegion!.minZoom,
+            widget.options.offlineRegion!.maxZoom,
+          ),
+    cameraTargetBounds: widget.options.offlineRegion == null
+        ? CameraTargetBounds.unbounded
+        : CameraTargetBounds(widget.options.offlineRegion!.bounds),
     onMapCreated: (map) => controller = map,
-    onStyleLoadedCallback: () => enqueue(initialize),
+    onStyleLoadedCallback: () => enqueue(() async {
+      // A reloaded native style has lost our custom layers and images.
+      ready = false;
+      appliedPlaces = null;
+      appliedSelection = null;
+      appliedLocation = null;
+      appliedRoad = null;
+      appliedStops = const [];
+      appliedStopSelection = null;
+      await initialize();
+    }),
     onMapClick: tap,
     featureTapsTriggersMapClick: true,
     // We own clustered style layers, so annotation managers are unnecessary.
@@ -311,11 +482,49 @@ class _NativePlaceMapState extends State<NativePlaceMap> {
     ),
     compassViewPosition: CompassViewPosition.topLeft,
     compassViewMargins: const math.Point(16, 132),
-    trackCameraPosition: true,
+    trackCameraPosition: false,
     // Location is a single user-requested fix, drawn from our local GeoJSON
     // source. The map SDK never starts a second location engine or prompt.
     myLocationEnabled: false,
   );
+}
+
+bool sameCoordinate(MapCoordinate? a, MapCoordinate? b) =>
+    a?.latitude == b?.latitude && a?.longitude == b?.longitude;
+
+CameraPosition initialCamera(OfflineRegionDefinition? region) {
+  if (region == null) {
+    return const CameraPosition(target: LatLng(13.9, 121.05), zoom: 9);
+  }
+  final bounds = region.bounds;
+  final west = bounds.southwest.longitude;
+  var east = bounds.northeast.longitude;
+  if (east < west) east += 360;
+  return CameraPosition(
+    target: LatLng(
+      (bounds.southwest.latitude + bounds.northeast.latitude) / 2,
+      ((west + east) / 2 + 180) % 360 - 180,
+    ),
+    zoom: region.minZoom,
+  );
+}
+
+final _markerImages = <String, Uint8List>{};
+final _pendingMarkerImages = <String, Future<Uint8List>>{};
+Future<Uint8List> cachedMarkerImage(CategoryMarker marker) async {
+  final cached = _markerImages[marker.key];
+  if (cached != null) return cached;
+  final pending = _pendingMarkerImages.putIfAbsent(
+    marker.key,
+    () => markerImage(marker),
+  );
+  try {
+    final bytes = await pending;
+    _markerImages[marker.key] = bytes;
+    return bytes;
+  } finally {
+    _pendingMarkerImages.remove(marker.key);
+  }
 }
 
 Future<Uint8List> markerImage(CategoryMarker marker) async {
@@ -352,12 +561,15 @@ Future<Uint8List> markerImage(CategoryMarker marker) async {
     Offset(32 - painter.width / 2, 29 - painter.height / 2),
   );
   final picture = recorder.endRecording();
-  final image = await picture.toImage(64, 80);
-  final bytes = (await image.toByteData(
-    format: ui.ImageByteFormat.png,
-  ))!.buffer.asUint8List();
-  image.dispose();
-  picture.dispose();
-  painter.dispose();
-  return bytes;
+  ui.Image? image;
+  try {
+    image = await picture.toImage(64, 80);
+    return (await image.toByteData(
+      format: ui.ImageByteFormat.png,
+    ))!.buffer.asUint8List();
+  } finally {
+    image?.dispose();
+    picture.dispose();
+    painter.dispose();
+  }
 }

@@ -7,6 +7,10 @@ import 'place_browser.dart';
 import 'place_journal.dart';
 import 'collection_dialog.dart';
 import 'collections.dart';
+import 'routes/route_planner.dart';
+import 'routes/road_router.dart';
+import 'backup/backup_page.dart';
+import 'map/offline_maps_page.dart';
 
 const forest = Color(0xFF254F40);
 const cream = Color(0xFFF6F5EF);
@@ -24,10 +28,12 @@ class JournalApp extends StatelessWidget {
     required this.store,
     this.mapCanvasBuilder,
     this.locationService,
+    this.roadRouter,
   });
   final JournalStore store;
   final MapCanvasBuilder? mapCanvasBuilder;
   final JournalLocation? locationService;
+  final RoadRouter? roadRouter;
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'Fieldnotes - Place journal',
@@ -59,6 +65,7 @@ class JournalApp extends StatelessWidget {
       store: store,
       mapCanvasBuilder: mapCanvasBuilder,
       locationService: locationService,
+      roadRouter: roadRouter,
     ),
   );
 }
@@ -69,22 +76,37 @@ class JournalShell extends StatefulWidget {
     required this.store,
     this.mapCanvasBuilder,
     this.locationService,
+    this.roadRouter,
   });
   final JournalStore store;
   final MapCanvasBuilder? mapCanvasBuilder;
   final JournalLocation? locationService;
+  final RoadRouter? roadRouter;
   @override
   State<JournalShell> createState() => _JournalShellState();
 }
 
-class _JournalShellState extends State<JournalShell> {
+class _JournalShellState extends State<JournalShell>
+    with WidgetsBindingObserver {
   int selected = 0;
   PlaceFilter filter = const PlaceFilter();
   late Future<List<List<Map<String, Object?>>>> data;
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) setState(refresh);
   }
 
   void refresh() {
@@ -96,6 +118,20 @@ class _JournalShellState extends State<JournalShell> {
   }
 
   Future<void> add() async {
+    if (selected == 3) {
+      await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => RoutePlanner(
+            store: widget.store,
+            canvasBuilder: widget.mapCanvasBuilder,
+            router: widget.roadRouter,
+          ),
+        ),
+      );
+      if (mounted) setState(refresh);
+      return;
+    }
     final saved = selected == 2
         ? await showDialog<bool>(
             context: context,
@@ -108,6 +144,28 @@ class _JournalShellState extends State<JournalShell> {
             builder: (_) => PlaceDialog(store: widget.store),
           );
     if (saved == true && mounted) setState(refresh);
+  }
+
+  Future<void> openBackup() async {
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BackupPage(
+          store: widget.store,
+          onRestored: () {
+            if (mounted) setState(refresh);
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> openOfflineMaps() async {
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (_) => OfflineMapsPage(store: widget.store)),
+    );
+    if (mounted) setState(refresh);
   }
 
   @override
@@ -200,10 +258,18 @@ class _JournalShellState extends State<JournalShell> {
                               ],
                             ),
                           ),
-                          const Tooltip(
-                            message:
-                                'Journal records are saved on this device. Basemap tiles may require internet.',
-                            child: Icon(
+                          IconButton(
+                            tooltip: 'Backup & export',
+                            onPressed: openBackup,
+                            icon: const Icon(
+                              Icons.backup_outlined,
+                              color: forest,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Offline maps',
+                            onPressed: openOfflineMaps,
+                            icon: const Icon(
                               Icons.offline_pin_outlined,
                               color: forest,
                             ),
@@ -242,6 +308,8 @@ class _JournalShellState extends State<JournalShell> {
                             onFilterChanged: (value) =>
                                 setState(() => filter = value),
                             showMap: selected == 0,
+                            onOpenBackup: openBackup,
+                            onOpenOfflineMaps: openOfflineMaps,
                             onViewChanged: (map) =>
                                 setState(() => selected = map ? 0 : 1),
                             onChanged: () {
@@ -262,27 +330,18 @@ class _JournalShellState extends State<JournalShell> {
                             locationService: widget.locationService,
                           );
                         }
-                        return ListView(
-                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
-                          children: [
-                            if (selected == 3) ...[
-                              const EmptyPanel(
-                                icon: Icons.route_outlined,
-                                title: 'Good trips begin with a plan',
-                                message:
-                                    'Your saved routes will live here. Multi-stop planning, distances, and travel times are planned for a later build.',
-                              ),
-                              ...routes.map(
-                                (r) => Card(
-                                  child: ListTile(
-                                    title: Text(r['name'] as String),
-                                    leading: const Icon(Icons.route),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        );
+                        if (selected == 3) {
+                          return RoutesPage(
+                            store: widget.store,
+                            routes: routes,
+                            onChanged: () {
+                              if (mounted) setState(refresh);
+                            },
+                            canvasBuilder: widget.mapCanvasBuilder,
+                            router: widget.roadRouter,
+                          );
+                        }
+                        return const SizedBox.shrink();
                       },
                     ),
                   ),
@@ -292,14 +351,20 @@ class _JournalShellState extends State<JournalShell> {
           ],
         ),
       ),
-      floatingActionButton: selected == 0 || selected == 3
+      floatingActionButton: selected == 0
           ? null
           : FloatingActionButton.extended(
               onPressed: add,
               backgroundColor: forest,
               foregroundColor: Colors.white,
               icon: const Icon(Icons.add),
-              label: Text(selected == 2 ? 'New collection' : 'Add place'),
+              label: Text(
+                selected == 2
+                    ? 'New collection'
+                    : selected == 3
+                    ? 'New route'
+                    : 'Add place',
+              ),
             ),
       bottomNavigationBar: wide
           ? null

@@ -206,7 +206,7 @@ void main() {
     await legacy.close();
     store = await JournalStore.open(factory: databaseFactoryFfi, path: path);
     expect((await store.places()).single['notes'], 'Quiet afternoon');
-    expect(await store.db.getVersion(), 3);
+    expect(await store.db.getVersion(), 4);
     expect(await store.db.query('attachment_cleanup'), isEmpty);
   });
   test('search, categories, status and favorites intersect', () {

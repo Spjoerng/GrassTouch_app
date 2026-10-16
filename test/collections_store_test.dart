@@ -226,7 +226,7 @@ void main() {
       });
       await legacy.close();
       store = await JournalStore.open(factory: databaseFactoryFfi, path: path);
-      expect(await store.db.getVersion(), 3);
+      expect(await store.db.getVersion(), 4);
       expect((await store.collection(collection))['description'], 'Keep this');
       expect((await store.collection(collection))['cover_path'], isNull);
       expect((await store.collectionPlaces(collection)).single['id'], place);

@@ -78,3 +78,41 @@ const pointFilter = [
   '!',
   ['has', 'point_count'],
 ];
+
+Map<String, dynamic> routeLineGeoJson(Map<String, dynamic>? geometry) => {
+  'type': 'FeatureCollection',
+  'features': [
+    if (geometry != null)
+      {
+        'type': 'Feature',
+        'geometry': geometry,
+        'properties': <String, dynamic>{},
+      },
+  ],
+};
+Map<String, dynamic> routeStopsGeoJson(
+  List<MapCoordinate> stops, {
+  int? selected,
+}) => {
+  'type': 'FeatureCollection',
+  'features': [
+    for (var i = 0; i < stops.length; i++)
+      {
+        'type': 'Feature',
+        'id': i,
+        'geometry': {
+          'type': 'Point',
+          'coordinates': [stops[i].longitude, stops[i].latitude],
+        },
+        'properties': {
+          'index': i,
+          'label': i == 0
+              ? 'S'
+              : i == stops.length - 1
+              ? 'D'
+              : '$i',
+          'selected': i == selected,
+        },
+      },
+  ],
+};

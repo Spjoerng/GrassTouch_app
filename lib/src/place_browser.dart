@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' show OfflineRegionDefinition;
 import 'data/journal_store.dart';
 import 'data/place_filter.dart';
 import 'map/journal_location.dart';
@@ -23,6 +24,9 @@ class PlaceBrowser extends StatelessWidget {
     this.collectionId,
     this.onRemovePlace,
     this.onAddPlaces,
+    this.onOpenBackup,
+    this.onOpenOfflineMaps,
+    this.offlineRegion,
   });
   final JournalStore store;
   final List<Map<String, Object?>> places;
@@ -36,6 +40,9 @@ class PlaceBrowser extends StatelessWidget {
   final int? collectionId;
   final ValueChanged<int>? onRemovePlace;
   final VoidCallback? onAddPlaces;
+  final VoidCallback? onOpenBackup;
+  final VoidCallback? onOpenOfflineMaps;
+  final OfflineRegionDefinition? offlineRegion;
   List<Map<String, Object?>> get filtered =>
       places.where(filter.matches).toList();
   Future<void> openPlace(
@@ -155,7 +162,26 @@ class PlaceBrowser extends StatelessWidget {
             hintText: collectionId == null
                 ? 'Search your places'
                 : 'Search this collection',
-            prefixIcon: const Icon(Icons.search),
+            prefixIcon: showMap && onOpenBackup != null
+                ? PopupMenuButton<String>(
+                    tooltip: 'Journal menu',
+                    icon: const Icon(Icons.menu),
+                    onSelected: (value) => value == 'offline'
+                        ? onOpenOfflineMaps?.call()
+                        : onOpenBackup!(),
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        value: 'backup',
+                        child: Text('Backup & export'),
+                      ),
+                      if (onOpenOfflineMaps != null)
+                        const PopupMenuItem(
+                          value: 'offline',
+                          child: Text('Offline maps'),
+                        ),
+                    ],
+                  )
+                : const Icon(Icons.search),
             filled: false,
             border: InputBorder.none,
             enabledBorder: InputBorder.none,
@@ -220,80 +246,84 @@ class PlaceBrowser extends StatelessWidget {
       ),
     ],
   );
-  Widget placeList(BuildContext context) => filtered.isEmpty
-      ? Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.place_outlined, size: 42),
-                const SizedBox(height: 16),
-                Text(
-                  places.isEmpty
-                      ? (collectionId == null
-                            ? 'Make room for a memory'
-                            : 'No places in this collection')
-                      : 'No places found',
-                  style: const TextStyle(fontSize: 22),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  places.isEmpty
-                      ? (collectionId == null
-                            ? 'Your visited places and future destinations will live here.'
-                            : 'Add saved places to start organizing this collection.')
-                      : 'Try another search or clear your filters.',
-                  textAlign: TextAlign.center,
-                ),
-                if (places.isEmpty && onAddPlaces != null)
-                  TextButton.icon(
-                    onPressed: onAddPlaces,
-                    icon: const Icon(Icons.playlist_add),
-                    label: const Text('Manage places'),
+  Widget placeList(BuildContext context) {
+    final visible = filtered;
+    return visible.isEmpty
+        ? Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.place_outlined, size: 42),
+                  const SizedBox(height: 16),
+                  Text(
+                    places.isEmpty
+                        ? (collectionId == null
+                              ? 'Make room for a memory'
+                              : 'No places in this collection')
+                        : 'No places found',
+                    style: const TextStyle(fontSize: 22),
                   ),
-              ],
-            ),
-          ),
-        )
-      : ListView.builder(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 100),
-          itemCount: filtered.length,
-          itemBuilder: (context, i) {
-            final place = filtered[i];
-            final marker = markerForCategory(place['category'] as String);
-            return Card(
-              child: ListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                leading: CircleAvatar(
-                  backgroundColor: marker.color,
-                  child: Icon(marker.icon, color: Colors.white),
-                ),
-                title: Text(
-                  place['name'] as String,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: Text(
-                  '${place['category']} - ${place['visited'] == 1 ? 'Visited' : 'Want to visit'}\n${place['latitude']}, ${place['longitude']}${place['rating'] == null ? '' : ' | ${place['rating']} / 5'}',
-                ),
-                isThreeLine: true,
-                trailing: onRemovePlace != null
-                    ? IconButton(
-                        tooltip: 'Remove from collection',
-                        onPressed: () => onRemovePlace!(place['id'] as int),
-                        icon: const Icon(Icons.remove_circle_outline),
-                      )
-                    : place['favorite'] == 1
-                    ? const Icon(Icons.favorite)
-                    : const Icon(Icons.chevron_right),
-                onTap: () => openPlace(context, place),
+                  const SizedBox(height: 12),
+                  Text(
+                    places.isEmpty
+                        ? (collectionId == null
+                              ? 'Your visited places and future destinations will live here.'
+                              : 'Add saved places to start organizing this collection.')
+                        : 'Try another search or clear your filters.',
+                    textAlign: TextAlign.center,
+                  ),
+                  if (places.isEmpty && onAddPlaces != null)
+                    TextButton.icon(
+                      onPressed: onAddPlaces,
+                      icon: const Icon(Icons.playlist_add),
+                      label: const Text('Manage places'),
+                    ),
+                ],
               ),
-            );
-          },
-        );
+            ),
+          )
+        : ListView.builder(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 100),
+            itemCount: visible.length,
+            itemBuilder: (context, i) {
+              final place = visible[i];
+              final marker = markerForCategory(place['category'] as String);
+              return Card(
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  leading: CircleAvatar(
+                    backgroundColor: marker.color,
+                    child: Icon(marker.icon, color: Colors.white),
+                  ),
+                  title: Text(
+                    place['name'] as String,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(
+                    '${place['category']} - ${place['visited'] == 1 ? 'Visited' : 'Want to visit'}\n${place['latitude']}, ${place['longitude']}${place['rating'] == null ? '' : ' | ${place['rating']} / 5'}',
+                  ),
+                  isThreeLine: true,
+                  trailing: onRemovePlace != null
+                      ? IconButton(
+                          tooltip: 'Remove from collection',
+                          onPressed: () => onRemovePlace!(place['id'] as int),
+                          icon: const Icon(Icons.remove_circle_outline),
+                        )
+                      : place['favorite'] == 1
+                      ? const Icon(Icons.favorite)
+                      : const Icon(Icons.chevron_right),
+                  onTap: () => openPlace(context, place),
+                ),
+              );
+            },
+          );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (showMap) {
@@ -301,6 +331,8 @@ class PlaceBrowser extends StatelessWidget {
         children: [
           Positioned.fill(
             child: JournalMapView(
+              offlineRegion: offlineRegion,
+              onOpenOfflineMaps: onOpenOfflineMaps,
               places: filtered,
               onPlacesSelected: (ids) => selectPlaces(context, ids),
               onSaveCoordinate: (point) => saveCoordinate(context, point),

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' show OfflineRegionDefinition;
 import 'journal_location.dart';
 import 'map_data.dart';
 import 'native_place_map.dart';
@@ -16,6 +17,8 @@ class JournalMapView extends StatefulWidget {
     required this.onShowList,
     this.canvasBuilder,
     this.locationService,
+    this.offlineRegion,
+    this.onOpenOfflineMaps,
   });
   final List<Map<String, Object?>> places;
   final ValueChanged<List<int>> onPlacesSelected;
@@ -23,11 +26,14 @@ class JournalMapView extends StatefulWidget {
   final VoidCallback onShowList;
   final MapCanvasBuilder? canvasBuilder;
   final JournalLocation? locationService;
+  final OfflineRegionDefinition? offlineRegion;
+  final VoidCallback? onOpenOfflineMaps;
   @override
   State<JournalMapView> createState() => _JournalMapViewState();
 }
 
-class _JournalMapViewState extends State<JournalMapView> {
+class _JournalMapViewState extends State<JournalMapView>
+    with WidgetsBindingObserver {
   late final locationService = widget.locationService ?? JournalLocation();
   MapCoordinate? selected, location;
   MapCameraRequest? camera;
@@ -35,11 +41,13 @@ class _JournalMapViewState extends State<JournalMapView> {
   String? mapError, settingsError;
   LocationFailure? locationFailure;
   int generation = 0;
+  int locationRequest = 0;
   Timer? timeout;
   bool get supported => widget.canvasBuilder != null || nativeMapsSupported;
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     startTimeout();
   }
 
@@ -58,8 +66,27 @@ class _JournalMapViewState extends State<JournalMapView> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    locationRequest++;
     timeout?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (!ready && mapError == null) startTimeout();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      timeout?.cancel();
+      locationRequest++;
+      // A location fix is a momentary observation. Clear it on backgrounding;
+      // returning from settings must never start a permission prompt itself.
+      setState(() {
+        locating = false;
+        location = null;
+      });
+    }
   }
 
   void retry() => setState(() {
@@ -69,6 +96,8 @@ class _JournalMapViewState extends State<JournalMapView> {
     startTimeout();
   });
   Future<void> locate() async {
+    if (locating) return;
+    final request = ++locationRequest;
     setState(() {
       locating = true;
       locationFailure = null;
@@ -76,7 +105,7 @@ class _JournalMapViewState extends State<JournalMapView> {
     });
     try {
       final point = await locationService.locate();
-      if (mounted) {
+      if (mounted && request == locationRequest) {
         setState(() {
           location = point;
           selected = point;
@@ -84,9 +113,13 @@ class _JournalMapViewState extends State<JournalMapView> {
         });
       }
     } on LocationFailure catch (failure) {
-      if (mounted) setState(() => locationFailure = failure);
+      if (mounted && request == locationRequest) {
+        setState(() => locationFailure = failure);
+      }
     } finally {
-      if (mounted) setState(() => locating = false);
+      if (mounted && request == locationRequest) {
+        setState(() => locating = false);
+      }
     }
   }
 
@@ -145,7 +178,7 @@ class _JournalMapViewState extends State<JournalMapView> {
             ),
             const SizedBox(height: 16),
             const Text(
-              'Map tiles: OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. Open the attribution control on the map for source links. Basemap display requires internet or locally available map data. This build does not download offline regions. Your place journal remains available offline.',
+              'Map tiles: OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. Open the attribution control on the map for source links. Missing or blank tiles do not affect your saved journal. Use the offline list or import a complete MapLibre map database from Offline maps. Coverage includes only the prepared area, style, and zoom levels. This build does not download regions or calculate roads offline.',
             ),
           ],
         ),
@@ -198,10 +231,25 @@ class _JournalMapViewState extends State<JournalMapView> {
             PopupMenuButton<String>(
               tooltip: 'Map options',
               icon: const Icon(Icons.more_horiz),
-              onSelected: (value) => value == 'info' ? legend() : retry(),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'info', child: Text('Map info')),
-                PopupMenuItem(value: 'reload', child: Text('Reload basemap')),
+              onSelected: (value) => value == 'info'
+                  ? legend()
+                  : value == 'offline'
+                  ? widget.onOpenOfflineMaps?.call()
+                  : retry(),
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'info',
+                  child: Text('Map info / missing tiles'),
+                ),
+                if (widget.onOpenOfflineMaps != null)
+                  const PopupMenuItem(
+                    value: 'offline',
+                    child: Text('Offline maps'),
+                  ),
+                const PopupMenuItem(
+                  value: 'reload',
+                  child: Text('Reload basemap'),
+                ),
               ],
             ),
           ],
@@ -232,6 +280,11 @@ class _JournalMapViewState extends State<JournalMapView> {
                   onPressed: widget.onShowList,
                   child: const Text('Use offline list'),
                 ),
+                if (widget.onOpenOfflineMaps != null)
+                  TextButton(
+                    onPressed: widget.onOpenOfflineMaps,
+                    child: const Text('Offline maps'),
+                  ),
               ],
             )
           else ...[
@@ -329,7 +382,9 @@ class _JournalMapViewState extends State<JournalMapView> {
         ),
       );
     }
+    final currentGeneration = generation;
     final options = MapCanvasOptions(
+      offlineRegion: widget.offlineRegion,
       places: widget.places,
       selected: selected,
       location: location,
@@ -340,7 +395,7 @@ class _JournalMapViewState extends State<JournalMapView> {
         setState(() => selected = point);
       },
       onReady: () {
-        if (!mounted) return;
+        if (!mounted || currentGeneration != generation) return;
         timeout?.cancel();
         setState(() {
           ready = true;
@@ -348,7 +403,7 @@ class _JournalMapViewState extends State<JournalMapView> {
         });
       },
       onError: (message) {
-        if (!mounted) return;
+        if (!mounted || currentGeneration != generation) return;
         timeout?.cancel();
         setState(() => mapError = message);
       },

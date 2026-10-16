@@ -1,0 +1,21 @@
+# Run from the project root:
+# dart run tool/prepare_launcher_icon.dart
+# dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/launcher_icon.png
+  adaptive_icon_background: '#254F40'
+  adaptive_icon_foreground: assets/icon.png
+  # Android's adaptive viewport enlarges the foreground. Add breathing room
+  # so the pin matches the visual weight of neighboring launcher icons.
+  adaptive_icon_foreground_inset: 15
+  remove_alpha_ios: true
+  background_color_ios: '#254F40'
+  windows:
+    generate: true
+    image_path: assets/launcher_icon.png
+    icon_size: 256
+  macos:
+    generate: true
+    image_path: assets/launcher_icon.png
